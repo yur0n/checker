@@ -25,42 +25,32 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
-	http.HandleFunc("/event", handleEvent)
+	http.HandleFunc("/event/", handleEvent)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func handleEvent(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+	subscriptionId := r.URL.Path[len("/event/"):]
+	if subscriptionId == "" {
+		http.Error(w, "Subscription ID is required", http.StatusBadRequest)
 		return
 	}
 
-	var data map[string]string
-	err := json.NewDecoder(r.Body).Decode(&data)
-	if err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
+	log.Println("Received request for subscription ID:", subscriptionId)
 
-	log.Println("Received event:", data["event"])
-	switch data["event"] {
-	case "parsing_start":
-		subscriptionId := data["subscriptionId"]
-		if isSubscriptionActive(subscriptionId) {
-			sendResponse(w, "parsing_response", map[string]string{"success": "false", "message": "Subscription in use", "subscriptionId": subscriptionId})
-		} else {
-			markSubscriptionActive(subscriptionId)
-			sendResponse(w, "parsing_response", map[string]string{"success": "true", "message": "Parsing started", "subscriptionId": subscriptionId})
-		}
-	case "parsing_end":
-		subscriptionId := data["subscriptionId"]
-		unmarkSubscriptionActive(subscriptionId)
-	case "heartbeat":
-		// subscriptionId := data["subscriptionId"]
-		// refreshSubscription(subscriptionId)
-	default:
-		log.Println("Unknown event:", data["event"])
-		http.Error(w, "Unknown event", http.StatusBadRequest)
+	switch r.Method {
+		case http.MethodGet:
+			if isSubscriptionActive(subscriptionId) {
+				sendResponse(w, "parsing_response", map[string]string{"success": "false", "message": "Subscription in use", "subscriptionId": subscriptionId})
+			} else {
+				markSubscriptionActive(subscriptionId)
+				sendResponse(w, "parsing_response", map[string]string{"success": "true", "message": "Parsing allowed", "subscriptionId": subscriptionId})
+			}
+		case http.MethodDelete:
+			unmarkSubscriptionActive(subscriptionId)
+			sendResponse(w, "parsing_response", map[string]string{"success": "true", "message": "Parsing ended", "subscriptionId": subscriptionId})
+		default:
+			http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -71,7 +61,7 @@ func isSubscriptionActive(subscriptionId string) bool {
 	exists, err := rdb.Exists(ctx, subscriptionId).Result()
 	if err != nil {
 		log.Println("Redis error:", err)
-		return false
+		return true
 	}
 	return exists == 1
 }

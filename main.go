@@ -11,13 +11,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+
+
 var (
-	rdb = redis.NewClient(&redis.Options{
-		Addr:     "test-go-redis-redis-tpqofm:6379",
-		Password: "vfpiebtu5hhuvcbk", // Replace with your password if needed
-		DB:       0,
-	})
-	ctx = context.Background() // Define the context globally
+	rdb = rdbInit()
+	ctx = context.Background()
 )
 
 func main() {
@@ -27,6 +25,16 @@ func main() {
 	}
 	http.HandleFunc("/event/", handleEvent)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func rdbInit() *redis.Client {
+    url := os.Getenv("REDIS_URL")
+    opts, err := redis.ParseURL(url)
+    if err != nil {
+        panic(err)
+    }
+
+    return redis.NewClient(opts)
 }
 
 func handleEvent(w http.ResponseWriter, r *http.Request) {

@@ -4,31 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"os"
 	"net/http"
+	"os"
 	"time"
-	"github.com/gorilla/websocket"
+
 	"github.com/redis/go-redis/v9"
 )
 
 var (
-	upgrader = websocket.Upgrader{
-		ReadBufferSize:  1024,
-		WriteBufferSize: 1024,
-		CheckOrigin: func(r *http.Request) bool {
-			// Дозволити всі підключення
-			return true
-		},
-	}
-
-	//  url := "redis://user:password@localhost:6379/0?protocol=3"
-    // opts, err := redis.ParseURL(url)
-    // if err != nil {
-    //     panic(err)
-    // }
-    // return redis.NewClient(opts)
-
-
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "test-go-redis-redis-tpqofm:6379",
 		Password: "vfpiebtu5hhuvcbk", // Replace with your password if needed
@@ -42,56 +25,42 @@ func main() {
 	if port == "" {
 		port = "3000"
 	}
-	http.HandleFunc("/ws", handleWebSocket)
+	http.HandleFunc("/event", handleEvent)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
-func handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Failed to upgrade to WebSocket:", err)
+func handleEvent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
 		return
 	}
-	defer conn.Close()
 
-	for {
-		messageType, messageBytes, err := conn.ReadMessage()
-		if err != nil {
-			log.Println("Read error:", err)
-			break
-		}
+	var data map[string]string
+	err := json.NewDecoder(r.Body).Decode(&data)
+	if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
 
-		if messageType != websocket.TextMessage {
-			log.Println("Non-text message received")
-			continue
+	log.Println("Received event:", data["event"])
+	switch data["event"] {
+	case "parsing_start":
+		subscriptionId := data["subscriptionId"]
+		if isSubscriptionActive(subscriptionId) {
+			sendResponse(w, "parsing_response", map[string]string{"success": "false", "message": "Subscription in use", "subscriptionId": subscriptionId})
+		} else {
+			markSubscriptionActive(subscriptionId)
+			sendResponse(w, "parsing_response", map[string]string{"success": "true", "message": "Parsing started", "subscriptionId": subscriptionId})
 		}
-
-		var data map[string]string
-		err = json.Unmarshal(messageBytes, &data)
-		if err != nil {
-			log.Println("JSON unmarshal error:", err)
-			continue
-		}
-
-		log.Println("Received event:", data["event"])
-		switch data["event"] {
-		case "parsing_start":
-			subscriptionId := data["subscriptionId"]
-			if isSubscriptionActive(subscriptionId) {
-				sendResponse(conn, "parsing_response", map[string]string{"success": "false", "message": "Subscription in use"})
-			} else {
-				markSubscriptionActive(subscriptionId)
-				sendResponse(conn, "parsing_response", map[string]string{"success": "true", "message": "Parsing started"})
-			}
-		case "parsing_end":
-			subscriptionId := data["subscriptionId"]
-			unmarkSubscriptionActive(subscriptionId)
-		case "heartbeat":
-			subscriptionId := data["subscriptionId"]
-			refreshSubscription(subscriptionId)
-		default:
-			log.Println("Unknown event:", data["event"])
-		}
+	case "parsing_end":
+		subscriptionId := data["subscriptionId"]
+		unmarkSubscriptionActive(subscriptionId)
+	case "heartbeat":
+		// subscriptionId := data["subscriptionId"]
+		// refreshSubscription(subscriptionId)
+	default:
+		log.Println("Unknown event:", data["event"])
+		http.Error(w, "Unknown event", http.StatusBadRequest)
 	}
 }
 
@@ -121,25 +90,17 @@ func unmarkSubscriptionActive(subscriptionId string) {
 	}
 }
 
-func refreshSubscription(subscriptionId string) {
-	log.Println("Subscription refreshed:", subscriptionId)
-	err := rdb.Expire(ctx, subscriptionId, 10*60*time.Second).Err()
-	if err != nil {
-		log.Println("Redis error:", err)
-	}
-}
-
-func sendResponse(conn *websocket.Conn, eventType string, data map[string]string) {
+func sendResponse(w http.ResponseWriter, eventType string, data map[string]string) {
 	respBytes, err := json.Marshal(map[string]interface{}{
 		"event": eventType,
 		"data":  data,
 	})
 	if err != nil {
 		log.Println("JSON marshal error:", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	err = conn.WriteMessage(websocket.TextMessage, respBytes)
-	if err != nil {
-		log.Println("Write error:", err)
-	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBytes)
 }

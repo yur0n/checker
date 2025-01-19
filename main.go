@@ -44,8 +44,6 @@ func handleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println("Received request for subscription ID:", subscriptionId)
-
 	switch r.Method {
 		case http.MethodGet:
 			if isSubscriptionActive(subscriptionId) {
@@ -70,6 +68,9 @@ func isSubscriptionActive(subscriptionId string) bool {
 	if err != nil {
 		log.Println("Redis error:", err)
 		return true
+	}
+	if exists == 1 {
+		log.Println("Subscription is in use:", subscriptionId)
 	}
 	return exists == 1
 }
